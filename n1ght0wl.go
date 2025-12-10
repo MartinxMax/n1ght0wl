@@ -2,6 +2,7 @@ package main
 // S-H4CK13 @ Maptnh
 import (
 	"bufio"
+	"flag"
 	"fmt"
 	"math/rand"
 	"net"
@@ -11,38 +12,56 @@ import (
 	"strings"
 	"sync"
 	"time"
-    "os/exec"
-    "regexp"
-    "strconv"
 	"github.com/manifoldco/promptui"
 	"github.com/schollz/progressbar/v3"
 	"golang.org/x/net/icmp"
 	"golang.org/x/net/ipv4"
 )
 
-
 var (
-	startTimestamp string
-	alive          sync.Map
-	defaultConcurrency = 1000
+	startTimestamp     string
+	alive              sync.Map
+	defaultConcurrency int
 )
+var line_sym = "\n"
 
- 
+func printHelp() {
+	fmt.Println(`N1ght0wl - Network Path Segment Leakage Hunter
+Usage:
+  sudo ./n1ght0wl-linux-amd64 [OPTIONS] (Linux)
+  .\n1ght0wl-windows-amd64.exe [OPTIONS] (Windows, run as administrator)
+
+Options:
+  -h, --help      Show this help message and exit
+  --fast          Enable fast scan mode (concurrency: 1000, default: 50)
+				  Hint: The cooldown period for Fast mode is 30 minutes. 
+				    Because when scanning upper-level routers in Fast mode, 
+					these routers are highly likely to ban your host IP, 
+					which will further cause the final upper-level router to enter an unresponsive state in the next scan.
+Description:
+	Nightowl is a tool designed to lock onto overlooked internal network paths, 
+	uncover hidden active subnets, and quickly determine which targets are still alive.
+	This project has passed functional tests in the network environments of large enterprises and educational institutions.
+	It can perform tracking and detection without requiring authentication operations via a network authentication server.
+`)
+}
+
 func ensurePrivilege() {
 	if runtime.GOOS == "linux" {
 		if os.Geteuid() != 0 {
 			fmt.Println("[!]Root privileges are required. Please run the program with sudo or as root.")
 			os.Exit(1)
 		}
+		line_sym = "\n"
 	} else if runtime.GOOS == "windows" {
 		_, err := os.Open("\\\\.\\PHYSICALDRIVE0")
 		if err != nil {
 			fmt.Println("[!] Please run this program as an administrator!")
 			os.Exit(1)
 		}
+		line_sym = "\r\n"
 	}
 }
-
 
 func getAvailableInterfaces() ([]net.Interface, error) {
 	var available []net.Interface
@@ -129,7 +148,7 @@ IP-Address:
 		Templates: templates,
 		Size:      6,
 		Searcher:  searcher,
-		HideHelp: true,
+		HideHelp:  true,
 	}
 
 	idx, _, err := prompt.Run()
@@ -138,55 +157,6 @@ IP-Address:
 	}
 	return items[idx].Iface, nil
 }
-
-func tracerouteReal(target string, maxHops int, timeoutSec int) []string {
-    var cmd *exec.Cmd
-    if runtime.GOOS == "windows" {
-        timeoutMs := strconv.Itoa(timeoutSec * 1000)
-        cmd = exec.Command("tracert", "-d", "-h", strconv.Itoa(maxHops), "-w", timeoutMs, target)
-    } else {
-        cmd = exec.Command("traceroute", "-n", "-m", strconv.Itoa(maxHops), "-w", strconv.Itoa(timeoutSec), target)
-    }
-
-    out, err := cmd.Output()
-    if err != nil {
-        fmt.Println("[!] Traceroute failed. Your machine may not have the tracert or traceroute command installed. Please install it and try again...:", err)
-        return nil
-    }
-
-    lines := strings.Split(string(out), "\n")
-    var hops []string
-
-    ipRegex := regexp.MustCompile(`\b\d{1,3}(\.\d{1,3}){3}\b`)
-
-    for _, line := range lines {
-        ips := ipRegex.FindAllString(line, -1)
-        if len(ips) > 0 {
-            hops = append(hops, ips[0])
-        }
-    }
-    return hops
-}
-
-
-func detectPrivateSegments(ipList []string) []string {
-	segments := make(map[string]bool)
-	for _, ipStr := range ipList {
-		if strings.HasPrefix(ipStr, "192.168") {
-			segments["192.168"] = true
-		} else if strings.HasPrefix(ipStr, "172.16") {
-			segments["172.16"] = true
-		} else if strings.HasPrefix(ipStr, "10.0") {
-			segments["10.0"] = true
-		}
-	}
-	var result []string
-	for k := range segments {
-		result = append(result, k)
-	}
-	return result
-}
-
 
 func genTargetsForSegment(segment string) []string {
 	parts := strings.Split(segment, ".")
@@ -237,11 +207,12 @@ func saveICMPResultSubnets(subnetMap map[string]bool, segment string) {
 	}
 	defer f.Close()
 	w := bufio.NewWriter(f)
+
 	for subnet := range subnetMap {
-		w.WriteString(subnet + "\n")
+		w.WriteString(subnet + line_sym)
 	}
 	w.Flush()
-	fmt.Printf("[+] Log saved successfully:%s\n", filename)
+	fmt.Printf("[+] Log saved successfully: %s\n", filename)
 }
 
 func icmpScan(segment string) {
@@ -256,10 +227,9 @@ func icmpScan(segment string) {
 	}
 	defer conn.Close()
 
-	var lastReplyTime int64 = time.Now().Unix()  
+	var lastReplyTime int64 = time.Now().Unix()
 	var mu sync.Mutex
 
- 
 	done := make(chan struct{})
 	go func() {
 		buf := make([]byte, 1500)
@@ -292,7 +262,7 @@ func icmpScan(segment string) {
 				}
 
 				mu.Lock()
-				lastReplyTime = time.Now().Unix() 
+				lastReplyTime = time.Now().Unix()
 				mu.Unlock()
 			}
 		}
@@ -335,7 +305,7 @@ func icmpScan(segment string) {
 	bar.Finish()
 
 	fmt.Println("[*] Nightowl is processing results...")
-	<-done 
+	<-done
 
 	subnetMap := make(map[string]bool)
 	alive.Range(func(key, _ interface{}) bool {
@@ -362,20 +332,21 @@ func icmpScan(segment string) {
 		fmt.Printf("===================\n")
 	}
 }
+
 const RED = "\033[31m"
 const BLUE = "\033[34m"
 const RESET = "\033[0m"
- 
+
 var LOGO = `
 ⢠⣴⣾⣿⣿⣶⣶⣤⣀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⣤⣶⣶⣿⣿⣷⣦⡄
 ⠀⠉⠻⣿⣿⣿⣿⡟⠛⠷⣦⣀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⣴⠾⠛⢻⣿⣿⣿⣿⠟⠉⠀
-⠀⠀⠀⠈⢻⣿⣿⣿⠀⠀⠈⠙⠳⢦⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⡴⠞⠋⠁⠀⠀⣿⣿⣿⡟⠁⠀⠀⠀
+⠀⠀⠀⠈⢻⣿⣿⣿⠀⠀⠈⠙⠳⢦⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⡴⠞⠋⠁⠀⠀⣿⣿⣿⡟⠁⠀⠀⠀
 ⠀⠀⠀⠀⠀⢻⣿⣿⡄⠀⠀⠀⠀⠀⠈⠑⠂⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠐⠊⠁⠀⠀⠀⠀⠀⢠⣿⣿⡟⠀⠀⠀⠀⠀
-⠀⠀⠀⠀⠀⡀⢹⣿⡇⠀⠀⠀⠀⠀⠀⠀⠀⣄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣠⠄⠀⠀⠀⠀⠀⠀⠀⢸⣿⡏⢀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⡀⢹⣿⡇⠀⠀⠀⠀⠀⠀⠀⠀⣄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣠⠄⠀⠀⠀⠀⠀⠀⠀⢸⣿⡏⢀⠀⠀⠀⠀⠀
 ⠀⠀⠀⠀⠀⠘⢷⣿⣷⠀⠀⠀⠀⠀⠀⠀⠀⠈⠻⢶⣤⣄⣀⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣀⣠⣤⡶⠟⠁⠀⠀⠀⠀⠀⠀⠀⠀⣾⣿⡾⠃⠀⠀⠀⠀⠀
 ⠀⠀⠀⠀⠀⠀⣌⣻⣿⣇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠉⠛⠿⢿⣿⣿⣷⣶⣶⣶⣶⣶⣶⣾⣿⣿⣿⠿⠛⠉⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣸⣿⣟⡡⠀⠀⠀⠀⠀⠀
 ⠀⠀⠀⠀⠀⠀⢸⣿⣿⢿⣆⠀⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠉⠛⠿⣿⣿⣿⣿⠿⠛⠉⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⠀⣰⡿⣿⣿⡇⠀⠀⠀⠀⠀⠀
-⠀⠀⠀⠀⠀⢀⣾⣿⠏⠀⢻⣷⣿⣄⠀⠀⠀⠀⠠⣀⠀⠀⢀⠀⠀⠀⠀⠀⠀⠙⠋⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⠄⠀⠀⠀⠀⣠⣿⣾⡟⠀⠹⣿⣷⡀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⢀⣾⣿⠏⠀⢻⣷⣿⣄⠀⠀⠀⠀⠠⣀⠀⠀⢀⠀⠀⠀⠀⠀⠀⠙⠋⠀⠀⠀⠀⠀⠀⠀⠀⢀⠄⠀⠀⠀⠀⣠⣿⣾⡟⠀⠹⣿⣷⡀⠀⠀⠀⠀⠀
 ⠀⠀⠀⠀⢀⣾⣿⠏⠀⠀⠀⠙⠿⣿⣷⣦⣄⡀⠀⠈⠑⢦⣬⣦⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣴⣥⡴⠊⠁⠀⢀⣠⣴⣾⣿⠿⠋⠀⠀⠀⠹⣿⣷⡀⠀⠀⠀⠀
 ⠀⠀⠀⠀⣾⣿⠃⠀⠀⠀⠲⠶⠿⣿⣿⠿⠟⠛⠲⠄⠀⠐⠺⢿⣿⣶⣄⠀⠀⠀⠀⠀⠀⣠⣴⣿⡿⠗⠂⠀⠠⠖⠛⠻⠿⣿⣿⠿⠶⠖⠀⠀⠀⠘⣿⣷⠀⠀⠀⠀
 ⠀⠀⠀⢰⣿⠃⠀⠀⣠⠂⠀⠠⠚⢉⣤⣶⣿⣿⣿⣿⣶⣄⡀⠀⠈⠙⠻⣿⣶⣶⣶⣶⣿⠿⠛⠁⠀⢀⣤⣶⣿⣿⣿⣿⣶⣤⡉⠓⠄⠀⠐⢄⠀⠀⠘⣿⡆⠀⠀⠀
@@ -383,19 +354,34 @@ var LOGO = `
 ⠀⠀⠀⢸⠀⠀⣼⣷⠀⠀⠀⠀⠀⠀⠸⣇⠀` + RED + "⠸⣿⣿⣷⡾" + RESET + `⠙⢿⡄⠀⠈⠳⣷⣤⣤⣾⡞⠁⠀⢠⡿⠉` + BLUE + "⢿⣿⣿⣾⠇" + RESET + `⠀⣸⠇⠀⠀⠀⠀⠀⠀⣾⣷⠀⠀⡇⠀⠀⠀
 ⠀⠀⠀⢸⠀⠀⣸⡟⠀⠀⠀⠀⠀⠀⠀⠹⣄⠀` + RED + "⠈⠉⠉" + RESET + `⣀⣴⣿⡷⠀⠀⠀⠈⠛⠛⠁⠀⠀⠀⢿⣿⣦⣀` + BLUE + "⠉⠉⠁" + RESET + `⠀⣰⠏⠀⠀⠀⠀⠀⠀⠀⢹⣇⠀⠀⡇⠀⠀⠀
 ⠀⠀⠀⠸⠀⠀⣿⣿⡄⠀⠀⠀⠀⠀⠀⠀⠈⠙⠛⠋⠩⠕⠛⠁⠀⠀⠀⠀⢠⣾⠻⡄⠀⠀⠀⠀⠈⠛⠪⠍⠛⠛⠋⠁⠀⠀⠀⠀⠀⠀⠀⢀⣿⣿⠀⠀⠇⠀⠀⠀
-⠀⠀⠀⠀⠀⠀⠘⣿⡇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣾⣿⠀⢿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢸⣿⠋⠀⠀⠀⠀⠀⠀
-⠀⠀⠀⠀⠀⠀⠀⢸⣿⣷⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣿⣿⠀⣿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣾⣿⡇⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠘⣿⡇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣾⣿⠀⢿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢸⣿⠋⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⢸⣿⣷⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣿⣿⠀⣿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣾⣿⡇⠀⠀⠀⠀⠀⠀⠀
 ⠀⠀⠀⠀⠀⠀⠀⠈⠘⢿⣿⣄⣄⠀⠀⠀⠀⠀⠠⠤⢤⣤⡀⠀⠀⠀⠀⠀⢸⣿⢰⡏⠀⠀⠀⠀⠀⢀⣤⡤⠤⠤⠀⠀⠀⠀⠀⢠⣄⣿⡿⠃⠁⠀⠀⠀⠀⠀⠀⠀
-⠀⠀⠀⠀⠀⠀⠀⠀⠀⠠⠿⠿⠿⠶⢄⡀⠀⠀⠐⠒⠒⠾⢿⣷⣄⠀⠀⠀⠈⣿⣿⠁⠀⠀⠀⣠⣾⡿⠷⠒⠒⠂⠀⠀⢀⡠⠶⠿⠿⠿⠄⠀⠀⠀⠀⠀⠀⠀⠀⠀
-⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠻⣷⣄⠀⠀⢹⡏⠀⠀⣠⣾⠟⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠙⢷⣦⣄⣠⣴⡾⠋⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠙⠻⠿⠋⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠠⠿⠿⠿⠶⢄⡀⠀⠀⠐⠒⠒⠾⢿⣷⣄⠀⠀⠀⠈⣿⣿⠁⠀⠀⠀⣠⣾⡿⠷⠒⠒⠂⠀⠀⢀⡠⠶⠿⠿⠿⠄⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠻⣷⣄⠀⠀⢹⡏⠀⠀⠀⠀⠀⠀⠙⢷⣦⣄⣠⣴⡾⠋⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠙⢷⣦⣄⣠⣴⡾⠋⠀⠀⠀⠀⠀⠙⠻⠿⠋⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
      <<Nightowl>>  		(Network Path Segment Leakage Hunter)
 @https://github.com/MartinxMax/     Maptnh@S-H4CK13
 ===============================================================================`
- 
+
 func main() {
 	fmt.Println(LOGO)
+	helpFlag := flag.Bool("help", false, "Show help message and exit")
+	fastMode := flag.Bool("fast", false, "Enable fast scan mode (concurrency: 1000, default: 50)")
+	flag.BoolVar(helpFlag, "h", false, "Alias for --help")
+	flag.Usage = printHelp
+	flag.Parse()
+	if *helpFlag {
+		printHelp()
+		os.Exit(0)
+	}
+
+	if *fastMode {
+		defaultConcurrency = 1000
+	} else {
+		defaultConcurrency = 50
+	}
+
 	ensurePrivilege()
 	startTimestamp = time.Now().Format("20060102")
 	rand.Seed(time.Now().UnixNano())
@@ -404,20 +390,10 @@ func main() {
 		fmt.Println("[!] Exit.....")
 		return
 	}
-	//ip, _ := getInterfaceIP(iface)
-	fmt.Println("[*] Tracing route...")
-	tracerouteIPs :=  tracerouteReal("84.200.69.80", 5, 5)
-	fmt.Println("[+] Traceroute Table:", tracerouteIPs)
-	segments := detectPrivateSegments(tracerouteIPs)
-	if len(segments) == 0 {
-		fmt.Println("[!] No route path found, exiting...")
-		return
-	}
-
- 
+	segments := []string{"192.168", "172.16", "10.0"}
 	prompt := promptui.Select{
-		Label: "Please select the network segment to scan (use the arrow keys to navigate)",
-		Items: segments,
+		Label:    "Please select the network segment to scan (use the arrow keys to navigate)",
+		Items:    segments,
 		HideHelp: true,
 	}
 	_, selectedSegment, err := prompt.Run()
