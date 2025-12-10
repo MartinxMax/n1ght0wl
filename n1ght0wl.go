@@ -22,6 +22,7 @@ var (
 	startTimestamp     string
 	alive              sync.Map
 	defaultConcurrency int
+	timeout int64  = 10  
 )
 var line_sym = "\n"
 
@@ -161,10 +162,6 @@ IP-Address:
 func genTargetsForSegment(segment string) []string {
 	parts := strings.Split(segment, ".")
 	first := parts[0]
-	second := "0"
-	if len(parts) > 1 {
-		second = parts[1]
-	}
 	targets := []string{}
 	switch first {
 	case "192":
@@ -241,7 +238,7 @@ func icmpScan(segment string) {
 			if err != nil {
 				if ne, ok := err.(net.Error); ok && ne.Timeout() {
 					mu.Lock()
-					if time.Now().Unix()-lastReplyTime >= 5 {
+					if time.Now().Unix()-lastReplyTime >= timeout {
 						mu.Unlock()
 						break
 					}
@@ -262,7 +259,6 @@ func icmpScan(segment string) {
 				} else {
 					alive.Store(ipStr, true)
 				}
-
 				mu.Lock()
 				lastReplyTime = time.Now().Unix()
 				mu.Unlock()
@@ -274,38 +270,58 @@ func icmpScan(segment string) {
 	bar := progressbar.Default(int64(total), "Scan Progress:")
 	sem := make(chan struct{}, defaultConcurrency)
 	var wg sync.WaitGroup
-
+	bsGroup := make(map[string][]string) 
+	parts := strings.Split(segment, ".")
+	first := parts[0]
 	for _, t := range targets {
-		ip := net.ParseIP(t)
-		if ip == nil {
-			bar.Add(1)
-			continue
+		var bsID string
+		ipParts := strings.Split(t, ".")
+		switch first {
+		case "192":
+			bsID = fmt.Sprintf("%s.%s.%s", ipParts[0], ipParts[1], ipParts[2])
+		case "172":
+			bsID = fmt.Sprintf("%s.%s", ipParts[0], ipParts[1])
+		case "10":
+			bsID = fmt.Sprintf("%s.%s", ipParts[0], ipParts[1])
 		}
-		wg.Add(1)
-		sem <- struct{}{}
-		go func(dst net.IP) {
-			defer wg.Done()
-			defer func() { <-sem }()
-			defer bar.Add(1)
-
-			icmpID := rand.Intn(0xffff)
-			icmpSeq := rand.Intn(0xffff)
-			body := &icmp.Echo{ID: icmpID, Seq: icmpSeq, Data: []byte("PING")}
-			msg := &icmp.Message{Type: ipv4.ICMPTypeEcho, Code: 0, Body: body}
-			b, err := msg.Marshal(nil)
-			if err != nil {
-				return
-			}
-			dstAddr := &net.IPAddr{IP: dst}
-			for i := 0; i < 3; i++ {
-				conn.WriteTo(b, dstAddr)
-				time.Sleep(5 * time.Millisecond)
-			}
-		}(ip)
+		bsGroup[bsID] = append(bsGroup[bsID], t)
 	}
-	wg.Wait()
-	bar.Finish()
+	for _, bsTargets := range bsGroup {
+		 
+		for _, t := range bsTargets {
+			ip := net.ParseIP(t)
+			if ip == nil {
+				bar.Add(1)
+				continue
+			}
+			wg.Add(1)
+			sem <- struct{}{}
+			go func(dst net.IP) {
+				defer wg.Done()
+				defer func() { <-sem }()
+				defer bar.Add(1)
 
+				icmpID := rand.Intn(0xffff)
+				icmpSeq := rand.Intn(0xffff)
+				body := &icmp.Echo{ID: icmpID, Seq: icmpSeq, Data: []byte("PING")}
+				msg := &icmp.Message{Type: ipv4.ICMPTypeEcho, Code: 0, Body: body}
+				b, err := msg.Marshal(nil)
+				if err != nil {
+					return
+				}
+				dstAddr := &net.IPAddr{IP: dst}
+				for i := 0; i < 3; i++ {
+					conn.WriteTo(b, dstAddr)
+					time.Sleep(5 * time.Millisecond)
+				}
+			}(ip)
+		}
+		wg.Wait()
+		mu.Lock()
+		lastReplyTime = time.Now().Unix()
+		mu.Unlock()
+ 	}
+	bar.Finish()
 	fmt.Println("[*] Nightowl is processing results...")
 	<-done
 
@@ -377,7 +393,7 @@ func main() {
 		printHelp()
 		os.Exit(0)
 	}
-
+	
 	if *fastMode {
 		defaultConcurrency = 1000
 	} else {
