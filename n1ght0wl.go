@@ -173,15 +173,17 @@ func genTargetsForSegment(segment string) []string {
 			targets = append(targets, fmt.Sprintf("%s.%d.254", segment, c))
 		}
 	case "172":
-		for c := 0; c <= 255; c++ {
-			targets = append(targets, fmt.Sprintf("%s.%d.1", first+"."+second, c))
-			targets = append(targets, fmt.Sprintf("%s.%d.254", first+"."+second, c))
+		for b := 16; b <= 31; b++ {
+			for c := 0; c <= 255; c++ {
+				targets = append(targets, fmt.Sprintf("172.%d.%d.1", b, c))
+				targets = append(targets, fmt.Sprintf("172.%d.%d.254", b, c))
+			}
 		}
 	case "10":
 		for b := 0; b <= 255; b++ {
 			for c := 0; c <= 255; c++ {
-				targets = append(targets, fmt.Sprintf("%s.%d.%d.1", first, b, c))
-				targets = append(targets, fmt.Sprintf("%s.%d.%d.254", first, b, c))
+				targets = append(targets, fmt.Sprintf("10.%d.%d.1", b, c))
+				targets = append(targets, fmt.Sprintf("10.%d.%d.254", b, c))
 			}
 		}
 	}
