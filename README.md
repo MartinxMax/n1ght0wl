@@ -20,33 +20,12 @@ $ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o b
 For Windows:
 ```
 $ CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o bin/n1ght0wl-windows-amd64.exe ./n1ght0wl.go
+$ CGO_ENABLED=0 GOOS=windows GOARCH=386 go build -trimpath -ldflags "-s -w" -o bin/n1ght0wl-windows-amd32.exe ./n1ght0wl.go
 ```
-
+ 
 ![alt text](./pic/image.png)
 
 
-# Install
-
-For Ubuntu / Debian-based systems:
-```bash
-sudo apt update
-sudo apt install traceroute -y
-```
-
-For CentOS / RHEL / Fedora systems:
-```bash
-sudo yum install traceroute -y
-# Or for Fedora
-sudo dnf install traceroute -y
-```
-
-For Arch Linux:
-```bash
-sudo pacman -S traceroute
-```
-
- 
- 
 
 
 # Usage
@@ -73,3 +52,7 @@ You can use the probed network segments for further enumeration with nmap or oth
 
 
 ![alt text](./pic/image-4.png)
+
+
+
+ 
