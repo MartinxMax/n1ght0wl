@@ -96,7 +96,7 @@ $ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o b
 `$ sudo ./r4ven-linux-amd64`
 
 
-![alt text](r-image.png)
+![alt text](./pic/r-image.png)
 
 
 
